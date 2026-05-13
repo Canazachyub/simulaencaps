@@ -2,14 +2,16 @@
 
 Plataforma web para realizar simulacros del **Examen Nacional de Competencias para Atención Primaria de Salud (ENCAPS)** organizado por el **Ministerio de Salud del Perú (MINSA)**. Dirigida a serumistas, médicos cirujanos, internos de medicina y demás profesionales de salud que rinden el ENCAPS.
 
-> **Nota:** Este repositorio se llama `simulaencib` por razones históricas (era un fork del simulador ENCIB de ASPEFAM). El producto actual es **SimulaENCAPS**. El renombrado del repo es parte del roadmap.
+**Demo en vivo:** https://canazachyub.github.io/simulaencaps/
+**Repositorio:** https://github.com/Canazachyub/simulaencaps
 
 ---
 
 ## Estado del proyecto
 
-**Versión:** 2.0.0 (migración ENCIB → ENCAPS completada)
-**Última actualización:** abril 2026
+**Versión:** 2.0.0
+**Última actualización:** mayo 2026
+**Deploy:** GitHub Pages (CI/CD automático vía GitHub Actions en cada push a `main`)
 
 | Capa | Estado | Notas |
 |------|--------|-------|
@@ -149,7 +151,7 @@ PF   = (PPP × 0.3) + (NENC × 0.7)        // Puntaje Final
 ## Estructura del proyecto
 
 ```
-simulaencib/                            (renombrar a simulaencaps en roadmap)
+simulaencaps/
 ├── src/
 │   ├── components/
 │   │   ├── landing/                    # Secciones de la landing
@@ -201,7 +203,7 @@ simulaencib/                            (renombrar a simulaencaps en roadmap)
 │   └── SHEETS_SETUP.md                 # Guía manual (también está setupSheets() en api.gs)
 │
 ├── tailwind.config.js                  # Tokens navy/teal/amber + fonts + radii
-├── vite.config.ts                      # base: '/simulaencib/'
+├── vite.config.ts                      # base: '/simulaencaps/'
 ├── .env                                # VITE_API_URL + VITE_USE_MOCK
 └── package.json
 ```
@@ -212,8 +214,8 @@ simulaencib/                            (renombrar a simulaencaps en roadmap)
 
 ### 1. Clonar e instalar
 ```bash
-git clone https://github.com/Canazachyub/simulaencib.git
-cd simulaencib
+git clone https://github.com/Canazachyub/simulaencaps.git
+cd simulaencaps
 npm install
 ```
 
@@ -243,7 +245,7 @@ Ver [`google-apps-script/SHEETS_SETUP.md`](google-apps-script/SHEETS_SETUP.md) p
 ```bash
 npm run dev
 ```
-Abre http://localhost:5173/simulaencib/
+Abre http://localhost:5173/simulaencaps/
 
 ### 5. Build de producción
 ```bash
@@ -368,7 +370,7 @@ Para servir en LAN:
 ```bash
 npm run dev -- --host
 ```
-Vite imprime una IP `http://192.168.x.x:5173/simulaencib/` accesible desde tu celular en la misma red.
+Vite imprime una IP `http://192.168.x.x:5173/simulaencaps/` accesible desde tu celular en la misma red.
 
 ### Componentes/utilities sugeridos a crear
 
@@ -390,7 +392,6 @@ Vite imprime una IP `http://192.168.x.x:5173/simulaencib/` accesible desde tu ce
 5. Touch targets mínimos 48×48px en todos los CTAs
 
 ### Backlog
-- [ ] **Renombrar repo** `simulaencib` → `simulaencaps` (cambio coordinado de `vite.config.ts` `base`, `App.tsx` `basename`, GitHub repo, GitHub Pages)
 - [ ] Pasarela de pago (Mercado Pago / Culqi) en lugar de WhatsApp
 - [ ] Sistema de testimonios reales con moderación (flag `aprobado` en sheet ya está)
 - [ ] PWA: manifest + service worker para instalación en móvil + uso offline del banqueo
