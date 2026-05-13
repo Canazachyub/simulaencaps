@@ -1,109 +1,141 @@
 import type {
   Question,
   Answer,
-  CourseResult,
+  BlockResult,
+  BlockType,
   ExamResult,
-  Student,
+  EncapsStudent,
   PerformanceLevel
 } from '../types';
-import { PERFORMANCE_THRESHOLDS } from '../types';
+import { PERFORMANCE_THRESHOLDS, BLOCK_ORDER } from '../types';
+
+// ============================================
+// CÁLCULO DE PUNTAJES ENCAPS
+// ============================================
 
 /**
- * Calcula la nota vigesimal (0-20) a partir de las respuestas correctas
- * Fórmula: nota = correctas / 5 (o equivalentemente: correctas * 20 / 100)
+ * Calcula la Nota Examen Nacional (NENC) en escala vigesimal (0-20).
+ * Fórmula: NENC = (correctas / 100) × 20
  */
-export function calculateVigesimalScore(correctAnswers: number, totalQuestions: number = 100): number {
-  const vigesimal = (correctAnswers / totalQuestions) * 20;
-  return Math.round(vigesimal * 100) / 100; // 2 decimales
+export function calculateNENC(correctAnswers: number, totalQuestions: number = 100): number {
+  if (totalQuestions <= 0) return 0;
+  const nenc = (correctAnswers / totalQuestions) * 20;
+  return Math.round(nenc * 100) / 100; // 2 decimales
 }
 
 /**
- * Calcula los resultados por curso (ENCIB tiene 8 cursos)
+ * Calcula el Puntaje Final (PF) ENCAPS en escala vigesimal (0-20).
+ * Fórmula: PF = (PPP × 0.3) + (NENC × 0.7)
  */
-export function calculateCourseResults(
+export function calculatePF(nenc: number, ppp: number): number {
+  const pf = (ppp * 0.3) + (nenc * 0.7);
+  return Math.round(pf * 100) / 100;
+}
+
+// ============================================
+// RESULTADOS POR BLOQUE
+// ============================================
+
+/**
+ * Calcula los resultados desglosados por cada uno de los 5 bloques ENCAPS.
+ * El resultado se ordena según `BLOCK_ORDER`.
+ */
+export function calculateBlockResults(
   questions: Question[],
   answers: Answer[]
-): CourseResult[] {
-  // Agrupar preguntas por curso
-  const courseGroups = new Map<string, { questions: Question[]; answers: Answer[] }>();
+): BlockResult[] {
+  // Inicializar todos los bloques (incluso si no hay preguntas) para mantener orden
+  const blockGroups = new Map<BlockType, { questions: Question[]; answers: Answer[] }>();
+  BLOCK_ORDER.forEach((b) => blockGroups.set(b, { questions: [], answers: [] }));
 
   questions.forEach((question) => {
-    if (!courseGroups.has(question.subject)) {
-      courseGroups.set(question.subject, { questions: [], answers: [] });
+    if (!blockGroups.has(question.block)) {
+      blockGroups.set(question.block, { questions: [], answers: [] });
     }
-    courseGroups.get(question.subject)!.questions.push(question);
+    blockGroups.get(question.block)!.questions.push(question);
   });
 
-  // Asociar respuestas con sus preguntas
   answers.forEach((answer) => {
     const question = questions.find(q => q.id === answer.questionId);
-    if (question && courseGroups.has(question.subject)) {
-      courseGroups.get(question.subject)!.answers.push(answer);
+    if (question && blockGroups.has(question.block)) {
+      blockGroups.get(question.block)!.answers.push(answer);
     }
   });
 
-  // Calcular resultados por curso
-  const results: CourseResult[] = [];
-
-  courseGroups.forEach((data, courseName) => {
-    const correctAnswers = data.answers.filter(a => a.isCorrect).length;
+  const results: BlockResult[] = [];
+  blockGroups.forEach((data, blockName) => {
     const totalQuestions = data.questions.length;
-    const percentage = totalQuestions > 0 ? (correctAnswers / totalQuestions) * 100 : 0;
+    if (totalQuestions === 0) return; // omitir bloques vacíos
+    const correctAnswers = data.answers.filter(a => a.isCorrect).length;
+    const percentage = (correctAnswers / totalQuestions) * 100;
 
     results.push({
-      name: courseName,
+      name: blockName,
       correctAnswers,
       totalQuestions,
       percentage: Math.round(percentage * 100) / 100
-      // No hay puntos ponderados en ENCIB - cada correcta = 1 punto
     });
   });
 
-  // Ordenar por nombre de curso (mantener orden del examen)
-  const courseOrder = [
-    'Anatomía', 'Embriología', 'Histología', 'Bioquímica',
-    'Fisiología', 'Patología', 'Farmacología', 'Microbiología-Parasitología'
-  ];
-
+  // Ordenar según BLOCK_ORDER
   return results.sort((a, b) => {
-    const indexA = courseOrder.indexOf(a.name);
-    const indexB = courseOrder.indexOf(b.name);
-    if (indexA === -1) return 1;
-    if (indexB === -1) return -1;
-    return indexA - indexB;
+    const ia = BLOCK_ORDER.indexOf(a.name);
+    const ib = BLOCK_ORDER.indexOf(b.name);
+    if (ia === -1) return 1;
+    if (ib === -1) return -1;
+    return ia - ib;
   });
 }
 
+// ============================================
+// NIVEL DE RENDIMIENTO
+// ============================================
+
 /**
- * Determina el nivel de rendimiento según las respuestas correctas
- * Basado en: ≥80 Excelente, ≥60 Bueno, ≥50 Regular, <50 Necesita práctica
+ * Determina el nivel de rendimiento a partir de la NENC vigesimal (0-20).
+ * Umbrales:
+ *  - aprobado_destacado: NENC ≥ 16
+ *  - aprobado:           NENC ≥ 14
+ *  - en_riesgo:          NENC ≥ 11
+ *  - desaprobado:        NENC < 11
  */
-export function getPerformanceLevel(correctAnswers: number): PerformanceLevel {
-  if (correctAnswers >= PERFORMANCE_THRESHOLDS.excellent) return 'excellent';
-  if (correctAnswers >= PERFORMANCE_THRESHOLDS.good) return 'good';
-  if (correctAnswers >= PERFORMANCE_THRESHOLDS.regular) return 'regular';
-  return 'needs_practice';
+export function getPerformanceLevel(nenc: number): PerformanceLevel {
+  if (nenc >= PERFORMANCE_THRESHOLDS.aprobado_destacado) return 'aprobado_destacado';
+  if (nenc >= PERFORMANCE_THRESHOLDS.aprobado) return 'aprobado';
+  if (nenc >= PERFORMANCE_THRESHOLDS.en_riesgo) return 'en_riesgo';
+  return 'desaprobado';
 }
 
+// ============================================
+// RESULTADO COMPLETO DEL EXAMEN
+// ============================================
+
 /**
- * Calcula el resultado completo del examen ENCIB
+ * Calcula el resultado completo del examen ENCAPS.
+ * Si se proporciona `ppp`, también calcula `pf`.
  */
 export function calculateExamResult(
-  student: Student,
+  student: EncapsStudent,
   questions: Question[],
   answers: Answer[],
-  startTime: Date
+  startTime: Date,
+  ppp?: number | null
 ): ExamResult {
-  const courseResults = calculateCourseResults(questions, answers);
+  const blockResults = calculateBlockResults(questions, answers);
 
-  // Calcular totales
   const correctAnswers = answers.filter(a => a.isCorrect).length;
-  const totalQuestions = questions.length; // 100
-  const rawScore = correctAnswers; // 1 punto por correcta
-  const vigesimalScore = calculateVigesimalScore(correctAnswers, totalQuestions);
-  const percentage = (correctAnswers / totalQuestions) * 100;
+  const totalQuestions = questions.length;
+  const rawScore = correctAnswers;
+  const nenc = calculateNENC(correctAnswers, totalQuestions);
+  const percentage = totalQuestions > 0 ? (correctAnswers / totalQuestions) * 100 : 0;
 
-  const totalTime = Math.round((new Date().getTime() - startTime.getTime()) / 1000);
+  const totalTime = Math.max(
+    0,
+    Math.round((new Date().getTime() - startTime.getTime()) / 1000)
+  );
+
+  const hasPPP = typeof ppp === 'number' && !Number.isNaN(ppp);
+  const pf = hasPPP ? calculatePF(nenc, ppp as number) : undefined;
 
   return {
     student,
@@ -111,33 +143,38 @@ export function calculateExamResult(
     correctAnswers,
     totalQuestions,
     rawScore,
-    vigesimalScore,
+    nenc,
+    ppp: hasPPP ? (ppp as number) : undefined,
+    pf,
+    vigesimalScore: nenc, // alias para compatibilidad
     percentage: Math.round(percentage * 100) / 100,
-    courseResults,
+    blockResults,
     answers,
     totalTime,
-    performanceLevel: getPerformanceLevel(correctAnswers)
+    performanceLevel: getPerformanceLevel(nenc)
   };
 }
 
-/**
- * Formatea el tiempo en formato MM:SS
- */
+// ============================================
+// FORMATEADORES Y HELPERS DE UI
+// ============================================
+
+/** Formatea segundos como MM:SS */
 export function formatTime(seconds: number): string {
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
+  const total = Math.max(0, Math.floor(seconds));
+  const mins = Math.floor(total / 60);
+  const secs = total % 60;
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
 }
 
-/**
- * Formatea el tiempo en formato legible (ej: "1h 30min 45s")
- */
+/** Formatea segundos en formato legible (ej: "1h 30min 45s") */
 export function formatTimeReadable(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const mins = Math.floor((seconds % 3600) / 60);
-  const secs = seconds % 60;
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const mins = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
 
-  const parts = [];
+  const parts: string[] = [];
   if (hours > 0) parts.push(`${hours}h`);
   if (mins > 0) parts.push(`${mins}min`);
   if (secs > 0 || parts.length === 0) parts.push(`${secs}s`);
@@ -145,9 +182,7 @@ export function formatTimeReadable(seconds: number): string {
   return parts.join(' ');
 }
 
-/**
- * Formatea un número con separador de miles
- */
+/** Formatea un número con separador de miles (locale es-PE) */
 export function formatNumber(num: number, decimals: number = 2): string {
   return num.toLocaleString('es-PE', {
     minimumFractionDigits: decimals,
@@ -155,9 +190,7 @@ export function formatNumber(num: number, decimals: number = 2): string {
   });
 }
 
-/**
- * Formatea una fecha en español
- */
+/** Formatea una fecha en español */
 export function formatDate(date: Date): string {
   return date.toLocaleDateString('es-PE', {
     weekday: 'long',
@@ -170,52 +203,45 @@ export function formatDate(date: Date): string {
 }
 
 /**
- * Obtiene el color para un porcentaje (para gráficos)
+ * Devuelve color hex según porcentaje (0-100) usando umbrales NENC equivalentes:
+ *  - ≥ 80% (≈ NENC 16) → teal
+ *  - ≥ 70% (≈ NENC 14) → teal
+ *  - ≥ 55% (≈ NENC 11) → amber
+ *  - < 55% → red
  */
 export function getColorForPercentage(percentage: number): string {
-  if (percentage >= 80) return '#10B981'; // emerald
-  if (percentage >= 60) return '#3B82F6'; // blue
-  if (percentage >= 50) return '#F59E0B'; // amber
-  return '#EF4444'; // red
+  if (percentage >= 70) return '#0D9488'; // teal-600
+  if (percentage >= 55) return '#D97706'; // amber-600
+  return '#DC2626'; // red-600
 }
 
-/**
- * Convierte índice numérico a letra (0 -> A, 1 -> B, etc.)
- */
+/** Convierte índice a letra: 0 -> A, 1 -> B, ... */
 export function indexToLetter(index: number): string {
   return String.fromCharCode(65 + index);
 }
 
-/**
- * Valida un DNI peruano (8 dígitos)
- */
+/** Valida un DNI peruano (8 dígitos) */
 export function validateDNI(dni: string): boolean {
   return /^\d{8}$/.test(dni);
 }
 
-/**
- * Valida un nombre (al menos 3 caracteres, solo letras y espacios)
- */
+/** Valida un nombre (3-100 chars, letras/espacios) */
 export function validateName(name: string): boolean {
   return /^[a-zA-ZáéíóúÁÉÍÓÚñÑ\s]{3,100}$/.test(name.trim());
 }
 
-/**
- * Formatea la nota vigesimal para mostrar (ej: "14.50")
- */
+/** Formatea una nota vigesimal (0-20) con 2 decimales */
 export function formatVigesimalScore(score: number): string {
   return score.toFixed(2);
 }
 
-/**
- * Obtiene el texto del nivel de rendimiento en español
- */
+/** Texto descriptivo del nivel de rendimiento */
 export function getPerformanceLevelText(level: PerformanceLevel): string {
   const texts: Record<PerformanceLevel, string> = {
-    excellent: 'Excelente',
-    good: 'Bueno',
-    regular: 'Regular',
-    needs_practice: 'Necesita práctica'
+    aprobado_destacado: 'Aprobado destacado',
+    aprobado: 'Aprobado',
+    en_riesgo: 'En riesgo',
+    desaprobado: 'Desaprobado'
   };
   return texts[level];
 }

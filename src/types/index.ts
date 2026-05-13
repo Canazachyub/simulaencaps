@@ -1,44 +1,78 @@
 // ============================================
-// TIPOS PRINCIPALES DEL SISTEMA - SimulaENCIB
+// TIPOS PRINCIPALES DEL SISTEMA - SimulaENCAPS
+// Examen Nacional de Competencias para Atención Primaria de Salud (MINSA)
 // ============================================
 
-// Cursos del ENCIB (8 cursos de ciencias básicas)
-export type CourseType =
-  | 'Anatomía'
-  | 'Embriología'
-  | 'Histología'
-  | 'Bioquímica'
-  | 'Fisiología'
-  | 'Patología'
-  | 'Farmacología'
-  | 'Microbiología-Parasitología';
+// ============================================
+// BLOQUES DEL ENCAPS (5 bloques, 100 preguntas)
+// ============================================
+export type BlockType =
+  | 'Salud Pública'
+  | 'Atención Integral'
+  | 'Ética'
+  | 'Investigación'
+  | 'Administración';
 
-// Estados del examen
+export const BLOCK_ORDER: BlockType[] = [
+  'Salud Pública',
+  'Atención Integral',
+  'Ética',
+  'Investigación',
+  'Administración'
+];
+
+export interface BlockMeta {
+  code: number;
+  name: BlockType;
+  questionCount: number;
+  description: string;
+  // color tag para UI (referencia tokens Tailwind)
+  accentColor: 'teal' | 'amber' | 'navy';
+  iconName: string; // ej: 'activity', 'heart-pulse', 'scale', 'flask-conical', 'briefcase'
+}
+
+export const BLOCK_CONFIG: Record<BlockType, BlockMeta> = {
+  'Salud Pública':     { code: 1, name: 'Salud Pública',     questionCount: 20, description: 'Epidemiología, vigilancia, promoción y determinantes sociales de la salud', accentColor: 'teal',  iconName: 'activity' },
+  'Atención Integral': { code: 2, name: 'Atención Integral', questionCount: 25, description: 'AIEPI, salud materna, salud mental, atención por etapas de vida',           accentColor: 'amber', iconName: 'heart-pulse' },
+  'Ética':             { code: 3, name: 'Ética',             questionCount: 15, description: 'Bioética, código deontológico, interculturalidad y derechos del paciente',   accentColor: 'navy',  iconName: 'scale' },
+  'Investigación':     { code: 4, name: 'Investigación',     questionCount: 15, description: 'Metodología, estadística, lectura crítica y medicina basada en evidencia',   accentColor: 'teal',  iconName: 'flask-conical' },
+  'Administración':    { code: 5, name: 'Administración',    questionCount: 25, description: 'Gestión de servicios, normativa MINSA, planificación y aseguramiento',       accentColor: 'amber', iconName: 'briefcase' }
+};
+
+// ============================================
+// ESTADOS DEL EXAMEN
+// ============================================
 export type ExamStatus = 'idle' | 'loading' | 'ready' | 'in_progress' | 'completed' | 'error';
 
 // ============================================
 // DATOS DEL ESTUDIANTE
 // ============================================
-export interface Student {
+export interface EncapsStudent {
   dni: string;
   fullName: string;
-  university?: string; // Universidad de procedencia (opcional)
+  email?: string;
+  phone?: string;
+  establecimiento?: string;
+  region?: string;
+  cargo?: string;
 }
 
+// Mantener alias `Student = EncapsStudent` por compatibilidad
+export type Student = EncapsStudent;
+
 // ============================================
-// CONFIGURACIÓN DE CURSOS
+// SUB-ÁREAS Y CONFIGURACIÓN
 // ============================================
-export interface Course {
-  code: number;
-  name: CourseType;
+export interface SubArea {
+  name: string;
   questionCount: number;
-  // En ENCIB cada pregunta vale 1 punto, no hay ponderación
+  topics: string[];
 }
 
 export interface ExamConfig {
-  courses: Course[];
+  blocks: BlockMeta[];
   totalQuestions: number; // 100
-  maxScore: number; // 100 (1 punto por pregunta)
+  maxScore: number;       // 100
 }
 
 // ============================================
@@ -54,15 +88,18 @@ export interface Question {
   id: string;
   number: number; // Número de pregunta global (1-100)
   questionText: string;
-  questionType: string; // "Caso Clínico" o "Problema"
+  questionType: string; // "Caso Clínico", "Problema", etc.
   options: string[];
-  correctAnswer: number; // Índice 0-based de la respuesta correcta
+  correctAnswer: number; // 0-based
   timeSeconds: number;
   imageLink: string | null;
-  subject: string; // Nombre del curso (CourseType)
-  points: number; // Siempre 1 en ENCIB
+  block: BlockType;            // ANTES era "subject"
+  subArea?: string;            // NUEVO
+  points: 1;
   sourceFile?: string | null;
-  justification?: string | null; // Explicación de la respuesta correcta
+  justification?: string | null;
+  referenciaNormativa?: string | null;                  // NUEVO
+  nivel?: 'Recordar' | 'Aplicar' | 'Analizar' | null;  // NUEVO
   metadata?: QuestionMetadata;
 }
 
@@ -73,35 +110,113 @@ export interface Answer {
   questionId: string;
   selectedOption: number | null; // null si no respondió
   isCorrect: boolean;
-  timeSpent: number; // Segundos que tardó en responder
+  timeSpent: number; // segundos
 }
 
 // ============================================
-// RESULTADOS DEL EXAMEN
+// RESULTADOS POR BLOQUE
 // ============================================
-export interface CourseResult {
-  name: string;
+export interface BlockResult {
+  name: BlockType;
   correctAnswers: number;
   totalQuestions: number;
   percentage: number;
-  // No hay puntos ponderados en ENCIB - cada correcta = 1 punto
 }
 
+// ============================================
+// NIVEL DE RENDIMIENTO (basado en NENC vigesimal)
+// ============================================
+export type PerformanceLevel =
+  | 'aprobado_destacado'  // NENC ≥ 16
+  | 'aprobado'            // NENC ≥ 14
+  | 'en_riesgo'           // NENC ≥ 11
+  | 'desaprobado';        // NENC < 11
+
+// ============================================
+// RESULTADO COMPLETO DEL EXAMEN
+// ============================================
 export interface ExamResult {
-  student: Student;
+  student: EncapsStudent;
   date: Date;
-  correctAnswers: number; // Total de respuestas correctas (0-100)
-  totalQuestions: number; // 100
-  rawScore: number; // Puntaje bruto (= correctAnswers)
-  vigesimalScore: number; // Nota vigesimal (0-20)
-  percentage: number; // Porcentaje (0-100)
-  courseResults: CourseResult[];
+  correctAnswers: number;     // 0-100
+  totalQuestions: number;     // 100
+  rawScore: number;           // = correctAnswers (0-100)
+  nenc: number;               // 0-20 (vigesimal del examen)
+  ppp?: number;               // 0-20 (input opcional del estudiante)
+  pf?: number;                // 0-20 (calculado si hay ppp)
+  vigesimalScore: number;     // alias = nenc para compatibilidad
+  percentage: number;         // 0-100
+  blockResults: BlockResult[];
   answers: Answer[];
-  totalTime: number; // Tiempo total en segundos
+  totalTime: number;          // segundos
   performanceLevel: PerformanceLevel;
 }
 
-export type PerformanceLevel = 'excellent' | 'good' | 'regular' | 'needs_practice';
+// ============================================
+// INFORMACIÓN GENERAL DEL EXAMEN
+// ============================================
+export const ENCAPS_INFO = {
+  name: 'ENCAPS',
+  fullName: 'Examen Nacional de Competencias para Atención Primaria de Salud',
+  organization: 'Ministerio de Salud del Perú (MINSA)',
+  totalQuestions: 100,
+  maxScore: 100,
+  vigesimalMax: 20,
+  durationHours: 3,
+  scoreFormula: 'PF = (PPP × 0.3) + (NENC × 0.7)'
+};
+
+// ============================================
+// UMBRALES DE RENDIMIENTO (basado en NENC vigesimal)
+// ============================================
+export const PERFORMANCE_THRESHOLDS = {
+  aprobado_destacado: 16,
+  aprobado: 14,
+  en_riesgo: 11
+};
+
+export const PERFORMANCE_MESSAGES: Record<PerformanceLevel, { title: string; message: string; color: string }> = {
+  aprobado_destacado: {
+    title: '¡Aprobado destacado!',
+    message: 'Estás muy bien preparado para el ENCAPS.',
+    color: 'teal'
+  },
+  aprobado: {
+    title: '¡Aprobado!',
+    message: 'Buena base. Refuerza los bloques con menor desempeño para subir tu nota.',
+    color: 'teal'
+  },
+  en_riesgo: {
+    title: 'En riesgo',
+    message: 'Identifica tus bloques débiles y enfoca tu estudio. Aún puedes mejorar.',
+    color: 'amber'
+  },
+  desaprobado: {
+    title: 'Necesitas más práctica',
+    message: 'Revisa cada bloque con calma y vuelve a intentarlo. Cada simulacro suma.',
+    color: 'red'
+  }
+};
+
+// ============================================
+// REGIONES DEL PERÚ Y CARGOS PROFESIONALES
+// ============================================
+export const PERU_REGIONS: string[] = [
+  'Amazonas', 'Áncash', 'Apurímac', 'Arequipa', 'Ayacucho', 'Cajamarca', 'Callao', 'Cusco',
+  'Huancavelica', 'Huánuco', 'Ica', 'Junín', 'La Libertad', 'Lambayeque', 'Lima', 'Loreto',
+  'Madre de Dios', 'Moquegua', 'Pasco', 'Piura', 'Puno', 'San Martín', 'Tacna', 'Tumbes', 'Ucayali'
+];
+
+export const CARGOS: string[] = [
+  'Médico SERUMS',
+  'Médico Cirujano',
+  'Interno de Medicina',
+  'Estudiante de Medicina',
+  'Enfermero/a',
+  'Obstetra',
+  'Odontólogo/a',
+  'Otro profesional de salud'
+];
 
 // ============================================
 // ESTADO DEL STORE (ZUSTAND)
@@ -114,7 +229,7 @@ export interface SavedAnswer {
 export interface ExamStore {
   // Estado
   status: ExamStatus;
-  student: Student | null;
+  student: EncapsStudent | null;
   config: ExamConfig | null;
   questions: Question[];
   currentQuestionIndex: number;
@@ -123,11 +238,13 @@ export interface ExamStore {
   result: ExamResult | null;
   error: string | null;
   startTime: Date | null;
+  ppp: number | null; // NUEVO
 
   // Acciones
-  setStudent: (student: Student) => void;
+  setStudent: (student: EncapsStudent) => void;
+  setPPP: (ppp: number | null) => void; // NUEVO
   loadConfig: () => Promise<void>;
-  loadQuestions: () => Promise<void>; // Sin parámetro de área
+  loadQuestions: () => Promise<void>;
   startExam: () => void;
   saveAnswer: (questionId: string, selectedOption: number | null) => void;
   answerQuestion: (questionId: string, selectedOption: number | null, timeSpent: number) => void;
@@ -149,7 +266,7 @@ export interface ApiResponse<T> {
 }
 
 // ============================================
-// PROPS DE COMPONENTES
+// PROPS DE COMPONENTES (referencia)
 // ============================================
 export interface QuestionProps {
   question: Question;
@@ -172,172 +289,5 @@ export interface TimerProps {
 }
 
 export interface ResultCardProps {
-  result: CourseResult;
+  result: BlockResult;
 }
-
-// ============================================
-// CONSTANTES - CURSOS ENCIB
-// ============================================
-export const COURSES: CourseType[] = [
-  'Anatomía',
-  'Embriología',
-  'Histología',
-  'Bioquímica',
-  'Fisiología',
-  'Patología',
-  'Farmacología',
-  'Microbiología-Parasitología'
-];
-
-// Configuración de cursos según Tabla de Especificaciones ENCIB 2024
-export const COURSE_CONFIG: Record<CourseType, { questionCount: number; subAreas: number; temas: number; description: string }> = {
-  'Anatomía': {
-    questionCount: 16,
-    subAreas: 9,
-    temas: 35,
-    description: 'Generalidades, Locomotor, Cabeza, Cuello, Sistema Nervioso, Tórax, Abdomen, Retroperitoneo, Pelvis'
-  },
-  'Embriología': {
-    questionCount: 7,
-    subAreas: 3,
-    temas: 21,
-    description: 'Introducción, Embriología y alteraciones, Embriología por sistemas'
-  },
-  'Histología': {
-    questionCount: 9,
-    subAreas: 6,
-    temas: 26,
-    description: 'Tejidos Básicos, Sistema Linfoide, Órganos Metabólicos, Reproductor, Sentidos, Tegumentario'
-  },
-  'Bioquímica': {
-    questionCount: 9,
-    subAreas: 5,
-    temas: 18,
-    description: 'Estructura celular, Señalización, Metabolismo general y tisular, Hormonas'
-  },
-  'Fisiología': {
-    questionCount: 16,
-    subAreas: 9,
-    temas: 53,
-    description: 'Cardiovascular, Respiratoria, Digestiva, Excretor, Endocrino, Hemato-inmune, Nervioso, Locomotor'
-  },
-  'Patología': {
-    questionCount: 16,
-    subAreas: 17,
-    temas: 105,
-    description: 'Lesión celular, Inflamación, Hemodinamia, Inmuno, Neoplasias, Infecciosa, por sistemas'
-  },
-  'Farmacología': {
-    questionCount: 16,
-    subAreas: 4,
-    temas: 53,
-    description: 'Generalidades, SN Vegetativo, Procesos somatosensoriales, Cardiovascular, Antiinfecciosos'
-  },
-  'Microbiología-Parasitología': {
-    questionCount: 11,
-    subAreas: 6,
-    temas: 26,
-    description: 'Bacteriología, Micología, Virología, Helmintos, Protozoos, Artrópodos'
-  }
-};
-
-// ============================================
-// CONSTANTES - UNIVERSIDADES ASPEFAM
-// ============================================
-export const UNIVERSITIES_BY_REGION: Record<string, { code: string; name: string }[]> = {
-  'Lima': [
-    { code: 'UNMSM', name: 'Universidad Nacional Mayor de San Marcos' },
-    { code: 'UPCH', name: 'Universidad Peruana Cayetano Heredia' },
-    { code: 'USMP', name: 'Universidad de San Martín de Porres' },
-    { code: 'URP', name: 'Universidad Ricardo Palma' },
-    { code: 'UNFV', name: 'Universidad Nacional Federico Villarreal' },
-    { code: 'UPC', name: 'Universidad Peruana de Ciencias Aplicadas' },
-    { code: 'UCSUR', name: 'Universidad Científica del Sur' },
-    { code: 'UPSJB', name: 'Universidad Privada San Juan Bautista' },
-    { code: 'USIL', name: 'Universidad San Ignacio de Loyola' },
-    { code: 'UPN', name: 'Universidad Privada del Norte' },
-  ],
-  'Norte del Perú': [
-    { code: 'UNT', name: 'Universidad Nacional de Trujillo' },
-    { code: 'UPAO', name: 'Universidad Privada Antenor Orrego' },
-    { code: 'UCV', name: 'Universidad César Vallejo' },
-    { code: 'UNP', name: 'Universidad Nacional de Piura' },
-    { code: 'UDEP', name: 'Universidad de Piura' },
-    { code: 'UNC', name: 'Universidad Nacional de Cajamarca' },
-    { code: 'UNS', name: 'Universidad Nacional del Santa' },
-  ],
-  'Sur del Perú': [
-    { code: 'UNSA', name: 'Universidad Nacional de San Agustín' },
-    { code: 'UCSM', name: 'Universidad Católica de Santa María' },
-    { code: 'UNSAAC', name: 'Universidad Nacional de San Antonio Abad del Cusco' },
-    { code: 'UNA', name: 'Universidad Nacional del Altiplano - Puno' },
-    { code: 'UPT', name: 'Universidad Privada de Tacna' },
-    { code: 'UNJBG', name: 'Universidad Nacional Jorge Basadre Grohmann' },
-  ],
-  'Centro y Oriente': [
-    { code: 'UNSLG', name: 'Universidad Nacional San Luis Gonzaga' },
-    { code: 'UNCP', name: 'Universidad Nacional del Centro del Perú' },
-    { code: 'UPLA', name: 'Universidad Peruana Los Andes' },
-    { code: 'UNHEVAL', name: 'Universidad Nacional Hermilio Valdizán' },
-    { code: 'UNSCH', name: 'Universidad Nacional San Cristóbal de Huamanga' },
-    { code: 'UNAP', name: 'Universidad Nacional de la Amazonía Peruana' },
-  ]
-};
-
-// Lista plana de todas las universidades
-export const ALL_UNIVERSITIES = Object.values(UNIVERSITIES_BY_REGION).flat();
-
-// ============================================
-// UMBRALES DE RENDIMIENTO (basado en correctas de 100)
-// ============================================
-export const PERFORMANCE_THRESHOLDS = {
-  excellent: 80, // ≥ 80 correctas = ≥ 16/20
-  good: 60,      // ≥ 60 correctas = ≥ 12/20
-  regular: 50,   // ≥ 50 correctas = ≥ 10/20
-  // needs_practice: < 50 correctas = < 10/20
-};
-
-export const PERFORMANCE_MESSAGES: Record<PerformanceLevel, { title: string; message: string; color: string }> = {
-  excellent: {
-    title: '¡Excelente!',
-    message: 'Tu preparación es sobresaliente. Estás muy bien preparado para el ENCIB.',
-    color: 'emerald'
-  },
-  good: {
-    title: '¡Buen trabajo!',
-    message: 'Tienes una buena base en ciencias básicas. Con un poco más de práctica alcanzarás la excelencia.',
-    color: 'blue'
-  },
-  regular: {
-    title: 'Regular',
-    message: 'Hay cursos que necesitan refuerzo. Enfócate en los temas con menor rendimiento.',
-    color: 'amber'
-  },
-  needs_practice: {
-    title: 'Necesitas practicar',
-    message: 'Es importante dedicar más tiempo al estudio de ciencias básicas. No te desanimes, cada práctica suma.',
-    color: 'red'
-  }
-};
-
-// ============================================
-// INFORMACIÓN DEL EXAMEN ENCIB
-// ============================================
-export const ENCIB_INFO = {
-  name: 'ENCIB',
-  fullName: 'Examen Nacional de Ciencias Básicas',
-  organization: 'Asociación Peruana de Facultades de Medicina (ASPEFAM)',
-  year: 2024,
-  totalQuestions: 100,
-  maxScore: 100,
-  vigesimalMax: 20,
-  questionTypes: {
-    casoClinico: { count: 70, percentage: 70 },
-    problema: { count: 30, percentage: 30 }
-  },
-  difficulty: {
-    alta: { min: 6, max: 18, percentage: '5-15%' },
-    media: { min: 48, max: 72, percentage: '40-60%' },
-    baja: { min: 24, max: 48, percentage: '25-40%' }
-  }
-};

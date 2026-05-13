@@ -2,116 +2,228 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Estilos base */
+/* =========================================================
+   Variables CSS expuestas (mismas del cssExport de Diseño.md)
+   ========================================================= */
+:root {
+  --color-navy: #16264D;
+  --color-navy-soft: #2D3E7A;
+  --color-teal: #00A99D;
+  --color-teal-dark: #009488;
+  --color-amber: #F5C518;
+  --color-bg: #F2F3F5;
+  --color-surface: #FFFFFF;
+  --color-border: #E2E5EA;
+  --color-text: #16264D;
+  --color-text-soft: #3D4B6E;
+
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 6px 18px rgba(22, 38, 77, 0.08);
+  --shadow-card-hover: 0 12px 28px rgba(22, 38, 77, 0.14);
+  --shadow-pill: 0 3px 10px rgba(22, 38, 77, 0.10);
+
+  --font-display: 'Montserrat', 'Poppins', system-ui, sans-serif;
+  --font-body: 'Inter', 'Open Sans', system-ui, sans-serif;
+
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* =========================================================
+   Base
+   ========================================================= */
 @layer base {
   html {
     scroll-behavior: smooth;
   }
 
   body {
-    @apply bg-slate-50 text-slate-800 antialiased;
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
   }
 }
 
-/* Componentes personalizados */
+/* =========================================================
+   Component classes reutilizables (SimulaENCAPS)
+   ========================================================= */
 @layer components {
-  .btn {
-    @apply inline-flex items-center justify-center gap-2 px-6 py-3 font-semibold rounded-xl transition-all duration-200 focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-
+  /* ----- Botones pill ----- */
   .btn-primary {
-    @apply btn bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500 shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 hover:-translate-y-0.5;
+    @apply bg-teal-500 hover:bg-teal-600 text-white font-bold uppercase tracking-wide rounded-pill px-7 py-3 shadow-pill transition-all duration-300;
+  }
+  .btn-accent {
+    @apply bg-amber-500 hover:bg-amber-600 text-navy-500 font-bold uppercase tracking-wide rounded-pill px-7 py-3 shadow-pill transition-all duration-300;
+  }
+  .btn-outline {
+    @apply border-2 border-navy-500 text-navy-500 hover:bg-navy-500 hover:text-white font-bold uppercase tracking-wide rounded-pill px-7 py-3 transition-all duration-300;
   }
 
-  .btn-secondary {
-    @apply btn bg-white text-slate-700 border-2 border-slate-200 hover:border-primary-300 hover:bg-primary-50 focus:ring-primary-500;
+  /* ----- Tarjeta estandar SimulaENCAPS ----- */
+  .card-encaps {
+    @apply bg-white rounded-[20px] border border-neutral-border shadow-card p-6 transition-all duration-300 hover:-translate-y-0.5 hover:shadow-cardHover;
   }
 
-  .btn-success {
-    @apply btn bg-emerald-500 text-white hover:bg-emerald-600 focus:ring-emerald-500 shadow-lg shadow-emerald-500/25;
+  /* ----- Badges pill ----- */
+  .badge-teal {
+    @apply inline-flex items-center bg-teal-500 text-white text-xs font-extrabold uppercase tracking-wider rounded-pill px-3 py-1;
+  }
+  .badge-amber {
+    @apply inline-flex items-center bg-amber-500 text-navy-500 text-xs font-extrabold uppercase tracking-wider rounded-pill px-3 py-1;
+  }
+  .badge-navy-outline {
+    @apply inline-flex items-center border-2 border-navy-500 text-navy-500 text-xs font-extrabold uppercase tracking-wider rounded-pill px-3 py-1;
   }
 
-  .btn-danger {
-    @apply btn bg-red-500 text-white hover:bg-red-600 focus:ring-red-500;
+  /* ----- Ribbon horizontal ----- */
+  .ribbon-navy {
+    @apply bg-navy-500 text-white rounded-pill flex items-center justify-center px-6 h-14 font-display font-bold uppercase tracking-wider;
   }
 
-  .card {
-    @apply bg-white rounded-2xl shadow-lg shadow-slate-200/50 border border-slate-100;
+  /* ----- Subrayado curvo amber bajo palabra clave en titulares ----- */
+  .accent-underline {
+    position: relative;
+    display: inline-block;
+  }
+  .accent-underline::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -6px;
+    height: 8px;
+    border-radius: 999px;
+    background: var(--color-amber);
+    opacity: 0.6;
+    transform: skewX(-8deg);
   }
 
+  /* ----- Decoraciones de fondo ----- */
+  .deco-dot-grid {
+    background-image: radial-gradient(rgba(77, 206, 189, 0.3) 1.5px, transparent 1.5px);
+    background-size: 16px 16px;
+  }
+  .deco-dashed-trail {
+    background-image: linear-gradient(90deg, rgba(85, 103, 160, 0.4) 50%, transparent 50%);
+    background-size: 8px 1.5px;
+    background-repeat: repeat-x;
+  }
+
+  /* ----- Inputs (legado, repintado a SimulaENCAPS) ----- */
   .input {
-    @apply w-full px-4 py-3 rounded-xl border-2 border-slate-200 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none transition-all duration-200;
+    @apply w-full px-4 py-3 rounded-md border-2 border-neutral-border focus:border-teal-500 focus:ring-2 focus:ring-teal-500/20 outline-none transition-all duration-200 bg-white;
   }
-
   .label {
-    @apply block text-sm font-medium text-slate-600 mb-2;
+    @apply block text-sm font-semibold text-navy-500 mb-2;
   }
 }
 
-/* Utilidades personalizadas */
+/* =========================================================
+   Utilities
+   ========================================================= */
 @layer utilities {
-  .text-gradient {
-    @apply bg-gradient-to-r from-primary-600 to-primary-500 bg-clip-text text-transparent;
+  .font-display {
+    font-family: var(--font-display);
+  }
+  .font-body {
+    font-family: var(--font-body);
+  }
+  .text-balance {
+    text-wrap: balance;
+  }
+  .ease-standard {
+    transition-timing-function: var(--ease);
+  }
+  .ease-bounce-soft {
+    transition-timing-function: var(--ease-bounce);
   }
 
+  /* Compatibilidad con animacion legada de feedback */
   .animate-shake {
     animation: shake 0.5s ease-in-out;
   }
-
-  @keyframes shake {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(-5px); }
-    75% { transform: translateX(5px); }
-  }
 }
 
-/* Scrollbar personalizado */
+/* =========================================================
+   Keyframes
+   ========================================================= */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+
+@keyframes underlineGrow {
+  0%   { transform: scaleX(0); transform-origin: left center; }
+  100% { transform: scaleX(1); transform-origin: left center; }
+}
+
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  25%      { transform: translateX(-5px); }
+  75%      { transform: translateX(5px); }
+}
+
+/* Animacion suave del cronometro (legado) */
+@keyframes pulse-warning {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.05); }
+}
+
+.timer-warning {
+  animation: pulse-warning 1s ease-in-out infinite;
+}
+
+/* =========================================================
+   Scrollbar SimulaENCAPS
+   ========================================================= */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  @apply bg-slate-100 rounded-full;
+  background-color: var(--color-bg);
+  border-radius: 999px;
 }
 
 ::-webkit-scrollbar-thumb {
-  @apply bg-slate-300 rounded-full hover:bg-slate-400;
+  background-color: #C6CDE0;
+  border-radius: 999px;
 }
 
-/* Animación del timer cuando está en warning */
-.timer-warning {
-  animation: pulse-warning 1s ease-in-out infinite;
+::-webkit-scrollbar-thumb:hover {
+  background-color: #8E9BC0;
 }
 
-@keyframes pulse-warning {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
-}
-
-/* Feedback de opciones */
+/* =========================================================
+   Feedback de opciones (legado, repintado a tokens encaps)
+   ========================================================= */
 .option-correct {
-  @apply border-emerald-500 bg-emerald-50 text-emerald-700;
+  @apply border-teal-500 bg-teal-50 text-teal-700;
 }
-
 .option-incorrect {
-  @apply border-red-500 bg-red-50 text-red-700;
+  @apply border-error-500 bg-error-50 text-error-600;
 }
-
 .option-selected {
-  @apply border-primary-500 bg-primary-50;
-}
-
-/* Animación suave del cronómetro */
-.animate-pulse-slow {
-  animation: pulse-slow 2s ease-in-out infinite;
-}
-
-@keyframes pulse-slow {
-  0%, 100% {
-    box-shadow: 0 10px 25px -5px rgba(168, 85, 247, 0.4);
-  }
-  50% {
-    box-shadow: 0 20px 35px -5px rgba(168, 85, 247, 0.6);
-  }
+  @apply border-navy-500 bg-navy-50;
 }

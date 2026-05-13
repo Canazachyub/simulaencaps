@@ -1,901 +1,602 @@
-import { useEffect, useState, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-  Trophy, Clock, Target, TrendingUp, RotateCcw,
-  CheckCircle, XCircle, User, CreditCard, GraduationCap, Calendar,
-  Grid3X3, ChevronLeft, ChevronRight, Eye, Table2, BarChart3, History, Award, Stethoscope
+  Trophy, Clock, Target, CheckCircle, XCircle, MinusCircle,
+  User, CreditCard, Building2, MapPin, Calendar,
+  Grid3X3, ChevronLeft, ChevronRight, BarChart3, History, Award,
+  Stethoscope, RotateCcw, Calculator
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   Cell, LineChart, Line
 } from 'recharts';
 import { useExamStore } from '../hooks/useExam';
-import { PERFORMANCE_MESSAGES, ALL_UNIVERSITIES } from '../types';
-import { formatTimeReadable, formatNumber, formatDate, getColorForPercentage, indexToLetter, formatVigesimalScore } from '../utils/calculations';
+import { PERFORMANCE_MESSAGES, BLOCK_CONFIG, ENCAPS_INFO } from '../types';
+import {
+  formatTimeReadable, formatDate, indexToLetter,
+  formatVigesimalScore, calculatePF
+} from '../utils/calculations';
 import { PDFGenerator } from './PDFGenerator';
-import { saveScore, getUserHistory, type UserHistory } from '../services/api';
+import { PPPInput } from './PPPInput';
+import { saveScore, getUserHistory, logAnswers, type UserHistory } from '../services/api';
 import clsx from 'clsx';
 
-interface ChartDataItem {
-  name: string;
-  fullName: string;
-  percentage: number;
-  correct: number;
-  total: number;
-}
+type TabId = 'block' | 'questions' | 'history';
+
+const ACCENT_HEX: Record<'teal' | 'amber' | 'navy', string> = {
+  teal: '#00A99D',
+  amber: '#F5C518',
+  navy: '#16264D'
+};
 
 export function Results() {
   const navigate = useNavigate();
-  const { result, questions, resetExam } = useExamStore();
-  const [showReview, setShowReview] = useState(false);
-  const [reviewIndex, setReviewIndex] = useState(0);
-  const [activeTab, setActiveTab] = useState<'review' | 'chart' | 'details' | 'history'>('review');
+  const { result, questions, resetExam, ppp: storePpp, setPPP } = useExamStore();
+  const [localPpp, setLocalPpp] = useState<number | null>(storePpp ?? null);
+  const [activeTab, setActiveTab] = useState<TabId>('block');
+  const [questionIndex, setQuestionIndex] = useState(0);
   const [userHistory, setUserHistory] = useState<UserHistory | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const scoreSaved = useRef(false);
+  const initRan = useRef(false);
 
+  // Calcular PF en vivo
+  const liveNenc = result?.nenc ?? 0;
+  const livePf = localPpp !== null ? calculatePF(liveNenc, localPpp) : null;
+  const performanceInfo = result ? PERFORMANCE_MESSAGES[result.performanceLevel] : null;
+
+  // Persistir PPP en el store
+  useEffect(() => {
+    setPPP(localPpp);
+  }, [localPpp, setPPP]);
+
+  // Mount: guardar score, fire-and-forget logAnswers, fetch history
   useEffect(() => {
     if (!result) {
       navigate('/');
       return;
     }
+    if (initRan.current) return;
+    initRan.current = true;
 
-    // Guardar puntaje y obtener historial (solo una vez)
-    if (!scoreSaved.current) {
-      scoreSaved.current = true;
-
-      // Primero guardar puntaje, LUEGO obtener historial
-      const saveAndFetchHistory = async () => {
-        setLoadingHistory(true);
-
-        // Guardar puntaje con formato ENCIB
+    (async () => {
+      setLoadingHistory(true);
+      try {
         await saveScore({
           dni: result.student.dni,
           correctAnswers: result.correctAnswers,
           totalQuestions: result.totalQuestions,
           rawScore: result.rawScore,
-          vigesimalScore: result.vigesimalScore
+          nenc: result.nenc,
+          ppp: localPpp ?? undefined,
+          pf: livePf ?? undefined
         });
+      } catch { /* fire and forget */ }
 
-        // Pequeña espera para asegurar que Google Sheets procese el registro
-        await new Promise(resolve => setTimeout(resolve, 500));
+      // logAnswers (fire-and-forget)
+      logAnswers(
+        result.student.dni,
+        result.answers.map(a => ({
+          questionId: a.questionId,
+          selectedOption: a.selectedOption,
+          isCorrect: a.isCorrect
+        }))
+      );
 
-        // Ahora sí obtener el historial actualizado
-        const history = await getUserHistory(result.student.dni);
-        setUserHistory(history);
-        setLoadingHistory(false);
-      };
-
-      saveAndFetchHistory();
-    }
+      await new Promise(r => setTimeout(r, 400));
+      const history = await getUserHistory(result.student.dni);
+      setUserHistory(history);
+      setLoadingHistory(false);
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result, navigate]);
 
-  if (!result) return null;
+  if (!result || !performanceInfo) return null;
 
-  const performanceInfo = PERFORMANCE_MESSAGES[result.performanceLevel];
+  // Color del NENC
+  const nencColorClass =
+    result.nenc >= 14 ? 'text-teal-500'
+    : result.nenc < 11 ? 'text-red-500'
+    : 'text-amber-500';
 
-  // Obtener nombre de la universidad
-  const universityInfo = ALL_UNIVERSITIES.find(u => u.code === result.student.university);
-  const universityName = universityInfo ? universityInfo.name : result.student.university;
-
-  const chartData: ChartDataItem[] = result.courseResults.map((course) => ({
-    name: course.name.length > 15 ? course.name.slice(0, 15) + '...' : course.name,
-    fullName: course.name,
-    percentage: course.percentage,
-    correct: course.correctAnswers,
-    total: course.totalQuestions
+  // Dataset bar chart por bloque
+  const blockChartData = result.blockResults.map(b => ({
+    name: b.name,
+    shortName: b.name.length > 16 ? b.name.slice(0, 14) + '…' : b.name,
+    percentage: Math.round(b.percentage * 10) / 10,
+    correct: b.correctAnswers,
+    total: b.totalQuestions,
+    color: ACCENT_HEX[BLOCK_CONFIG[b.name].accentColor]
   }));
+
+  // Map de respuestas
+  const answerMap = useMemo(() => {
+    const m = new Map<string, { selectedOption: number | null; isCorrect: boolean }>();
+    result.answers.forEach(a => m.set(a.questionId, { selectedOption: a.selectedOption, isCorrect: a.isCorrect }));
+    return m;
+  }, [result.answers]);
+
+  const currentQ = questions[questionIndex];
+  const currentAns = currentQ ? answerMap.get(currentQ.id) : null;
+
+  const totalCorrect = result.correctAnswers;
+  const totalQuestions = result.totalQuestions;
+  const totalIncorrect = totalQuestions - totalCorrect - result.answers.filter(a => a.selectedOption === null).length;
+  const totalUnanswered = result.answers.filter(a => a.selectedOption === null).length;
+  const averageTimePerQuestion = result.answers.length > 0
+    ? result.answers.reduce((s, a) => s + a.timeSpent, 0) / result.answers.length
+    : 0;
 
   const handleRestart = () => {
     resetExam();
     navigate('/');
   };
 
-  const totalCorrect = result.correctAnswers;
-  const totalQuestions = result.totalQuestions;
-  const averageTimePerQuestion = result.answers.length > 0
-    ? result.answers.reduce((sum, a) => sum + a.timeSpent, 0) / result.answers.length
-    : 0;
-
-  // Datos para la revisión de preguntas
-  const answerMap = useMemo(() => {
-    const map = new Map<string, { selectedOption: number | null; isCorrect: boolean }>();
-    result.answers.forEach(answer => {
-      map.set(answer.questionId, {
-        selectedOption: answer.selectedOption,
-        isCorrect: answer.isCorrect
-      });
-    });
-    return map;
-  }, [result.answers]);
-
-  // Agrupar preguntas por curso para el navegador
-  const questionsByCourse = useMemo(() => {
-    const groups: { course: string; questions: { index: number; isCorrect: boolean }[] }[] = [];
-    let currentCourse = '';
-
-    questions.forEach((q, idx) => {
-      if (q.subject !== currentCourse) {
-        currentCourse = q.subject;
-        groups.push({ course: currentCourse, questions: [] });
-      }
-      const answer = answerMap.get(q.id);
-      groups[groups.length - 1].questions.push({
-        index: idx,
-        isCorrect: answer?.isCorrect ?? false
-      });
-    });
-
-    return groups;
-  }, [questions, answerMap]);
-
-  const currentQuestion = questions[reviewIndex];
-  const currentAnswer = currentQuestion ? answerMap.get(currentQuestion.id) : null;
+  const getQuestionState = (i: number): 'correct' | 'incorrect' | 'unanswered' => {
+    const q = questions[i];
+    const a = q ? answerMap.get(q.id) : null;
+    if (!a || a.selectedOption === null) return 'unanswered';
+    return a.isCorrect ? 'correct' : 'incorrect';
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 py-8 px-4">
-      <div className="max-w-4xl mx-auto space-y-8">
-        {/* Score Card - ENCIB con nota vigesimal */}
-        <div className="card p-8 text-center animate-fade-in">
-          <div
-            className={clsx(
-              'inline-flex items-center gap-2 px-4 py-2 rounded-full mb-6',
-              {
-                'bg-emerald-100 text-emerald-700': result.performanceLevel === 'excellent',
-                'bg-blue-100 text-blue-700': result.performanceLevel === 'good',
-                'bg-amber-100 text-amber-700': result.performanceLevel === 'regular',
-                'bg-red-100 text-red-700': result.performanceLevel === 'needs_practice'
-              }
-            )}
-          >
+    <div className="min-h-screen bg-neutral-bg py-8 px-4">
+      <div className="max-w-4xl mx-auto space-y-6">
+        {/* HEADER NENC */}
+        <div className="card-encaps text-center animate-fade-in">
+          <div className={clsx(
+            'inline-flex items-center gap-2 px-4 py-2 rounded-pill mb-6 font-bold uppercase text-sm tracking-wider',
+            performanceInfo.color === 'teal' && 'bg-teal-500/10 text-teal-700',
+            performanceInfo.color === 'amber' && 'bg-amber-500/20 text-amber-700',
+            performanceInfo.color === 'red' && 'bg-red-100 text-red-700'
+          )}>
             <Trophy className="w-5 h-5" />
-            <span className="font-semibold">{performanceInfo.title}</span>
+            {performanceInfo.title}
           </div>
 
-          {/* Nota Vigesimal prominente */}
-          <div className="mb-4">
-            <h2 className="text-sm font-medium text-slate-500 uppercase tracking-wider mb-2">Nota Vigesimal</h2>
-            <h1 className="text-5xl md:text-6xl font-extrabold text-cyan-600">
-              {formatVigesimalScore(result.vigesimalScore)}
-              <span className="text-2xl text-slate-400 font-normal"> / 20</span>
-            </h1>
-          </div>
+          <h2 className="text-sm font-bold uppercase tracking-widest text-neutral-textSoft mb-2">
+            NENC (Nota Examen Nacional)
+          </h2>
+          <h1 className={clsx('font-display font-extrabold leading-none', nencColorClass)} style={{ fontSize: '5rem' }}>
+            {formatVigesimalScore(result.nenc)}
+            <span className="text-3xl text-neutral-muted font-normal"> / 20</span>
+          </h1>
 
-          {/* Puntaje bruto secundario */}
-          <div className="mb-6">
-            <p className="text-slate-600">
-              <span className="font-bold text-slate-800">{result.rawScore}</span> de {result.totalQuestions} respuestas correctas
-              <span className="text-slate-400 mx-2">|</span>
-              {result.percentage.toFixed(1)}%
-            </p>
-          </div>
+          <p className="mt-4 text-neutral-textSoft">
+            <span className="font-bold text-navy-500">{result.correctAnswers}</span> de {result.totalQuestions} respuestas correctas
+            <span className="mx-2 text-neutral-muted">|</span>
+            {result.percentage.toFixed(1)}%
+          </p>
 
-          <p className="text-lg text-slate-700 max-w-xl mx-auto">
+          <p className="text-base text-navy-500 max-w-xl mx-auto mt-4">
             {performanceInfo.message}
           </p>
         </div>
 
-        {/* Student Info */}
-        <div className="card p-6 animate-fade-in">
-          <h2 className="text-lg font-bold text-slate-800 mb-4 flex items-center gap-2">
-            <User className="w-5 h-5 text-cyan-600" />
+        {/* PPP INPUT + PF */}
+        <div className="card-encaps animate-fade-in">
+          <h2 className="text-lg font-display font-bold text-navy-500 mb-2 flex items-center gap-2">
+            <Calculator className="w-5 h-5 text-teal-500" />
+            Calcula tu Puntaje Final (PF)
+          </h2>
+          <p className="text-sm text-neutral-textSoft mb-4">
+            Ingresa tu Promedio Ponderado Promocional (PPP) para calcular tu Puntaje Final ENCAPS.
+          </p>
+          <PPPInput value={localPpp} onChange={setLocalPpp} />
+        </div>
+
+        <div className="card-encaps animate-fade-in bg-navy-500 text-white" style={{ background: '#16264D' }}>
+          <h2 className="text-sm font-bold uppercase tracking-widest text-white/70 mb-3">
+            Puntaje Final (PF)
+          </h2>
+          <div className="text-center">
+            <div className="font-mono text-sm text-amber-500 mb-2">
+              {ENCAPS_INFO.scoreFormula}
+            </div>
+            {livePf !== null ? (
+              <div className="font-display font-extrabold text-amber-500" style={{ fontSize: '4rem', lineHeight: 1 }}>
+                {formatVigesimalScore(livePf)}
+                <span className="text-2xl text-white/60 font-normal"> / 20</span>
+              </div>
+            ) : (
+              <div className="font-display font-bold text-white/40 text-2xl py-6">
+                Ingresa tu PPP para ver tu PF
+              </div>
+            )}
+            {livePf !== null && (
+              <p className="text-sm text-white/70 mt-3 font-mono">
+                ({localPpp?.toFixed(2)} × 0.3) + ({result.nenc.toFixed(2)} × 0.7) = {livePf.toFixed(2)}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Datos del estudiante */}
+        <div className="card-encaps animate-fade-in">
+          <h2 className="text-lg font-display font-bold text-navy-500 mb-4 flex items-center gap-2">
+            <User className="w-5 h-5 text-teal-500" />
             Datos del examen
           </h2>
           <div className="grid sm:grid-cols-2 gap-4">
-            <div className="flex items-center gap-3 text-slate-600">
-              <CreditCard className="w-5 h-5 text-slate-400" />
-              <span>DNI: <strong className="text-slate-800">{result.student.dni}</strong></span>
+            <div className="flex items-center gap-3 text-neutral-textSoft">
+              <CreditCard className="w-5 h-5 text-neutral-muted" />
+              <span>DNI: <strong className="text-navy-500">{result.student.dni}</strong></span>
             </div>
-            <div className="flex items-center gap-3 text-slate-600">
-              <User className="w-5 h-5 text-slate-400" />
-              <span className="truncate">Nombre: <strong className="text-slate-800">{result.student.fullName}</strong></span>
+            <div className="flex items-center gap-3 text-neutral-textSoft">
+              <User className="w-5 h-5 text-neutral-muted" />
+              <span className="truncate">Nombre: <strong className="text-navy-500">{result.student.fullName}</strong></span>
             </div>
-            <div className="flex items-start gap-3 text-slate-600">
-              <GraduationCap className="w-5 h-5 text-slate-400 mt-0.5" />
-              <span className="truncate">Universidad: <strong className="text-slate-800">{universityName}</strong></span>
-            </div>
-            <div className="flex items-center gap-3 text-slate-600">
-              <Calendar className="w-5 h-5 text-slate-400" />
+            {result.student.establecimiento && (
+              <div className="flex items-start gap-3 text-neutral-textSoft">
+                <Building2 className="w-5 h-5 text-neutral-muted mt-0.5" />
+                <span className="truncate">Establecimiento: <strong className="text-navy-500">{result.student.establecimiento}</strong></span>
+              </div>
+            )}
+            {result.student.region && (
+              <div className="flex items-center gap-3 text-neutral-textSoft">
+                <MapPin className="w-5 h-5 text-neutral-muted" />
+                <span>Región: <strong className="text-navy-500">{result.student.region}</strong></span>
+              </div>
+            )}
+            <div className="flex items-center gap-3 text-neutral-textSoft">
+              <Calendar className="w-5 h-5 text-neutral-muted" />
               <span className="text-sm">{formatDate(result.date)}</span>
             </div>
           </div>
         </div>
 
-        {/* Stats Grid */}
+        {/* Stats grid */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-fade-in">
-          <div className="card p-4 text-center">
-            <CheckCircle className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{totalCorrect}</p>
-            <p className="text-sm text-slate-500">Correctas</p>
+          <div className="card-encaps text-center">
+            <CheckCircle className="w-8 h-8 text-teal-500 mx-auto mb-2" />
+            <p className="text-2xl font-display font-bold text-navy-500">{totalCorrect}</p>
+            <p className="text-sm text-neutral-textSoft">Correctas</p>
           </div>
-          <div className="card p-4 text-center">
+          <div className="card-encaps text-center">
             <XCircle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{totalQuestions - totalCorrect}</p>
-            <p className="text-sm text-slate-500">Incorrectas</p>
+            <p className="text-2xl font-display font-bold text-navy-500">{totalIncorrect}</p>
+            <p className="text-sm text-neutral-textSoft">Incorrectas</p>
           </div>
-          <div className="card p-4 text-center">
-            <Clock className="w-8 h-8 text-cyan-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{formatTimeReadable(result.totalTime)}</p>
-            <p className="text-sm text-slate-500">Tiempo total</p>
+          <div className="card-encaps text-center">
+            <MinusCircle className="w-8 h-8 text-neutral-muted mx-auto mb-2" />
+            <p className="text-2xl font-display font-bold text-navy-500">{totalUnanswered}</p>
+            <p className="text-sm text-neutral-textSoft">Sin responder</p>
           </div>
-          <div className="card p-4 text-center">
-            <Target className="w-8 h-8 text-amber-500 mx-auto mb-2" />
-            <p className="text-2xl font-bold text-slate-800">{Math.round(averageTimePerQuestion)}s</p>
-            <p className="text-sm text-slate-500">Prom. por pregunta</p>
+          <div className="card-encaps text-center">
+            <Clock className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+            <p className="text-2xl font-display font-bold text-navy-500">{formatTimeReadable(result.totalTime)}</p>
+            <p className="text-sm text-neutral-textSoft">Tiempo total</p>
           </div>
         </div>
 
-        {/* Tabs de navegación */}
-        <div className="card p-2 animate-fade-in">
+        {/* Tabs */}
+        <div className="card-encaps p-2 animate-fade-in">
           <div className="flex gap-1">
-            <button
-              onClick={() => setActiveTab('review')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'review'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <Grid3X3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Revisión</span>
-              <span className="sm:hidden">Revisión</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('chart')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'chart'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Rendimiento</span>
-              <span className="sm:hidden">Gráfico</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('details')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'details'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <Table2 className="w-4 h-4" />
-              <span className="hidden sm:inline">Detalle</span>
-              <span className="sm:hidden">Tabla</span>
-            </button>
-            <button
-              onClick={() => setActiveTab('history')}
-              className={clsx(
-                'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-lg text-sm font-medium transition-all',
-                activeTab === 'history'
-                  ? 'bg-cyan-600 text-white shadow-md'
-                  : 'bg-slate-50 text-slate-600 hover:bg-slate-100'
-              )}
-            >
-              <History className="w-4 h-4" />
-              <span className="hidden sm:inline">Historial</span>
-              <span className="sm:hidden">Historial</span>
-            </button>
+            {([
+              { id: 'block' as const, icon: BarChart3, label: 'Por bloque' },
+              { id: 'questions' as const, icon: Grid3X3, label: 'Detalle de preguntas' },
+              { id: 'history' as const, icon: History, label: 'Histórico' }
+            ]).map(t => (
+              <button
+                key={t.id}
+                onClick={() => setActiveTab(t.id)}
+                className={clsx(
+                  'flex-1 flex items-center justify-center gap-2 px-4 py-3 rounded-pill text-sm font-bold uppercase transition-all',
+                  activeTab === t.id ? 'bg-teal-500 text-white shadow-md' : 'bg-neutral-bg text-navy-500 hover:bg-neutral-border'
+                )}
+              >
+                <t.icon className="w-4 h-4" />
+                <span className="hidden sm:inline">{t.label}</span>
+              </button>
+            ))}
           </div>
         </div>
 
-        {/* Tab Content: Revisión de Preguntas */}
-        {activeTab === 'review' && (
-        <>
-        <div className="card p-6 animate-fade-in">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <Grid3X3 className="w-5 h-5 text-cyan-600" />
-                Revisión de Preguntas
-              </h2>
-              <p className="text-sm text-slate-500 mt-1">
-                Revisa cada pregunta para ver cuáles acertaste y cuáles fallaste
-              </p>
+        {/* Tab: Por bloque */}
+        {activeTab === 'block' && (
+          <div className="card-encaps animate-fade-in">
+            <h2 className="text-lg font-display font-bold text-navy-500 mb-4">Aciertos por bloque</h2>
+            <div style={{ height: Math.max(280, blockChartData.length * 56) }}>
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={blockChartData} layout="vertical" margin={{ top: 10, right: 40, left: 130, bottom: 10 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" horizontal={false} />
+                  <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} stroke="#6B7280" fontSize={12} />
+                  <YAxis type="category" dataKey="shortName" stroke="#16264D" tick={{ fontSize: 11, fill: '#16264D' }} width={125} tickLine={false} axisLine={false} />
+                  <Tooltip
+                    content={({ payload }) => {
+                      if (!payload || payload.length === 0) return null;
+                      const d = payload[0].payload as typeof blockChartData[number];
+                      return (
+                        <div className="bg-white border border-neutral-border rounded-lg px-4 py-3 shadow-xl">
+                          <p className="font-display font-bold text-navy-500 mb-1">{d.name}</p>
+                          <p className="text-neutral-textSoft">
+                            <span className="font-semibold" style={{ color: d.color }}>{d.percentage.toFixed(1)}%</span>
+                            {' '}({d.correct}/{d.total})
+                          </p>
+                        </div>
+                      );
+                    }}
+                  />
+                  <Bar dataKey="percentage" radius={[0, 6, 6, 0]} barSize={30} background={{ fill: '#F3F4F6' }}>
+                    {blockChartData.map((entry, i) => <Cell key={i} fill={entry.color} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
             </div>
-            <button
-              onClick={() => setShowReview(!showReview)}
-              className={clsx(
-                'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors',
-                showReview
-                  ? 'bg-cyan-600 text-white'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200'
-              )}
-            >
-              <Eye className="w-4 h-4" />
-              {showReview ? 'Ocultar detalle' : 'Ver detalle'}
-            </button>
+
+            {/* Tabla por bloque */}
+            <div className="mt-6 overflow-x-auto rounded-lg border border-neutral-border">
+              <table className="w-full text-sm">
+                <thead className="bg-navy-500 text-white">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-display uppercase text-xs">Bloque</th>
+                    <th className="px-3 py-2 text-center font-display uppercase text-xs">Correctas</th>
+                    <th className="px-3 py-2 text-center font-display uppercase text-xs">%</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-neutral-border">
+                  {result.blockResults.map(b => (
+                    <tr key={b.name}>
+                      <td className="px-3 py-2 text-navy-500 font-semibold">{b.name}</td>
+                      <td className="px-3 py-2 text-center">{b.correctAnswers} / {b.totalQuestions}</td>
+                      <td className="px-3 py-2 text-center font-bold" style={{ color: ACCENT_HEX[BLOCK_CONFIG[b.name].accentColor] }}>
+                        {b.percentage.toFixed(1)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
+        )}
 
-          {/* Legend compacta */}
-          <div className="flex flex-wrap gap-4 mb-4 pb-4 border-b border-slate-100 text-sm">
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-emerald-500"></div>
-              <span className="text-slate-600">Correcta</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm bg-red-500"></div>
-              <span className="text-slate-600">Incorrecta</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-3 h-3 rounded-sm ring-2 ring-cyan-500 bg-cyan-100"></div>
-              <span className="text-slate-600">Viendo</span>
-            </div>
-          </div>
-
-          {/* Navigator Grid - 2 columnas en desktop */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {questionsByCourse.map((group, gIdx) => {
-              const correctCount = group.questions.filter(q => q.isCorrect).length;
-              const totalCount = group.questions.length;
-              const percentage = totalCount > 0 ? (correctCount / totalCount) * 100 : 0;
-
-              return (
-                <div
-                  key={gIdx}
-                  className="bg-slate-50 rounded-lg p-3 hover:bg-slate-100 transition-colors"
-                >
-                  {/* Header con nombre y stats */}
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-semibold text-slate-700 truncate flex-1">
-                      {group.course}
-                    </h4>
-                    <span
-                      className={clsx(
-                        'text-xs font-bold px-1.5 py-0.5 rounded ml-2',
-                        percentage >= 60 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
-                      )}
-                    >
-                      {correctCount}/{totalCount}
-                    </span>
-                  </div>
-
-                  {/* Mini barra de progreso */}
-                  <div className="h-1 bg-slate-200 rounded-full mb-2 overflow-hidden">
-                    <div
-                      className={clsx(
-                        'h-full rounded-full transition-all',
-                        percentage >= 60 ? 'bg-emerald-500' : 'bg-red-500'
-                      )}
-                      style={{ width: `${percentage}%` }}
-                    />
-                  </div>
-
-                  {/* Botones de preguntas */}
-                  <div className="flex flex-wrap gap-1">
-                    {group.questions.map(({ index, isCorrect }) => (
-                      <button
-                        key={index}
-                        onClick={() => {
-                          setReviewIndex(index);
-                          setShowReview(true);
-                        }}
-                        className={clsx(
-                          'w-7 h-7 rounded text-xs font-medium transition-all',
-                          index === reviewIndex && showReview
-                            ? 'ring-2 ring-cyan-500 ring-offset-1 scale-110 z-10'
-                            : '',
-                          isCorrect
-                            ? 'bg-emerald-500 text-white hover:bg-emerald-600'
-                            : 'bg-red-500 text-white hover:bg-red-600'
-                        )}
-                      >
-                        {index + 1}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Question Detail View */}
-        {showReview && currentQuestion && (
-          <div className="card p-6 animate-fade-in">
+        {/* Tab: Detalle de preguntas */}
+        {activeTab === 'questions' && (
+          <div className="card-encaps animate-fade-in">
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-slate-800">
-                Pregunta {reviewIndex + 1} de {questions.length}
-              </h3>
-              <span className="px-3 py-1 bg-cyan-100 text-cyan-700 rounded-full text-sm font-medium">
-                {currentQuestion.subject}
+              <h2 className="text-lg font-display font-bold text-navy-500">Detalle de preguntas</h2>
+              <span className="text-sm text-neutral-textSoft">
+                {questionIndex + 1} de {questions.length}
               </span>
             </div>
 
-            {/* Question Text */}
-            <div className="mb-4">
-              <div
-                className="text-slate-800 leading-relaxed prose prose-sm max-w-none"
-                dangerouslySetInnerHTML={{
-                  __html: `<span class="font-semibold text-cyan-600">P${reviewIndex + 1}.</span> ${currentQuestion.questionText}`
-                }}
-              />
+            {/* Legend */}
+            <div className="flex flex-wrap gap-4 mb-4 pb-4 border-b border-neutral-border text-sm">
+              <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-teal-500"></div><span className="text-neutral-textSoft">Correcta</span></div>
+              <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-red-500"></div><span className="text-neutral-textSoft">Incorrecta</span></div>
+              <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-neutral-muted"></div><span className="text-neutral-textSoft">No respondida</span></div>
             </div>
 
-            {/* Source File */}
-            {currentQuestion.sourceFile && (
-              <div className="mb-4 text-right">
-                <span className="text-xs italic text-slate-400 font-light">
-                  Fuente: {currentQuestion.sourceFile}
-                </span>
-              </div>
-            )}
-
-            {/* Question Image */}
-            {currentQuestion.imageLink && (
-              <div className="mb-4">
-                <img
-                  src={currentQuestion.imageLink}
-                  alt="Imagen de la pregunta"
-                  className="max-w-full h-auto rounded-lg border border-slate-200 mx-auto"
-                  style={{ maxHeight: '200px' }}
-                />
-              </div>
-            )}
-
-            {/* Options */}
-            <div className="space-y-2 mb-4">
-              {currentQuestion.options.map((option, index) => {
-                const isSelected = currentAnswer?.selectedOption === index;
-                const isCorrectAnswer = currentQuestion.correctAnswer === index;
-
-                let optionStyle = 'border-slate-200 bg-white';
-                if (isCorrectAnswer) {
-                  optionStyle = 'border-emerald-500 bg-emerald-50';
-                } else if (isSelected && !isCorrectAnswer) {
-                  optionStyle = 'border-red-500 bg-red-50';
-                }
-
+            {/* Grid 1-100 */}
+            <div className="grid grid-cols-10 sm:grid-cols-12 md:grid-cols-15 gap-1.5 mb-6" style={{ gridTemplateColumns: 'repeat(10, minmax(0, 1fr))' }}>
+              {questions.map((_, i) => {
+                const state = getQuestionState(i);
                 return (
-                  <div
-                    key={index}
+                  <button
+                    key={i}
+                    onClick={() => setQuestionIndex(i)}
                     className={clsx(
-                      'p-3 rounded-lg border-2 flex items-start gap-3',
-                      optionStyle
+                      'h-9 rounded text-xs font-bold transition-all',
+                      i === questionIndex ? 'ring-2 ring-amber-500 scale-110 z-10' : '',
+                      state === 'correct' && 'bg-teal-500 text-white hover:bg-teal-600',
+                      state === 'incorrect' && 'bg-red-500 text-white hover:bg-red-600',
+                      state === 'unanswered' && 'bg-neutral-muted/40 text-navy-500 hover:bg-neutral-muted/60'
                     )}
                   >
-                    <div
-                      className={clsx(
-                        'flex-shrink-0 w-8 h-8 rounded flex items-center justify-center font-bold text-sm',
-                        isCorrectAnswer
-                          ? 'bg-emerald-500 text-white'
-                          : isSelected
-                            ? 'bg-red-500 text-white'
-                            : 'bg-slate-200 text-slate-600'
-                      )}
-                    >
-                      {isCorrectAnswer ? (
-                        <CheckCircle className="w-5 h-5" />
-                      ) : isSelected ? (
-                        <XCircle className="w-5 h-5" />
-                      ) : (
-                        indexToLetter(index)
-                      )}
-                    </div>
-                    <span
-                      className={clsx(
-                        'flex-1 pt-1 text-sm',
-                        isCorrectAnswer
-                          ? 'text-emerald-700 font-medium'
-                          : isSelected
-                            ? 'text-red-700'
-                            : 'text-slate-600'
-                      )}
-                    >
-                      {option}
-                    </span>
-                  </div>
+                    {i + 1}
+                  </button>
                 );
               })}
             </div>
 
-            {/* Result Badge */}
-            <div
-              className={clsx(
-                'p-3 rounded-lg flex items-center gap-2',
-                currentAnswer?.isCorrect
-                  ? 'bg-emerald-100 text-emerald-800'
-                  : 'bg-red-100 text-red-800'
-              )}
-            >
-              {currentAnswer?.isCorrect ? (
-                <>
-                  <CheckCircle className="w-5 h-5" />
-                  <span className="font-medium">Respuesta correcta (+1 punto)</span>
-                </>
-              ) : (
-                <>
-                  <XCircle className="w-5 h-5" />
-                  <span className="font-medium">
-                    {currentAnswer?.selectedOption === null
-                      ? 'Sin responder'
-                      : `Respuesta incorrecta - La correcta es: ${indexToLetter(currentQuestion.correctAnswer)}`}
-                  </span>
-                </>
-              )}
-            </div>
+            {/* Detalle pregunta */}
+            {currentQ && (
+              <div className="border-t border-neutral-border pt-4">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="badge-teal">{currentQ.block}</span>
+                  {currentQ.subArea && <span className="badge-navy-outline">{currentQ.subArea}</span>}
+                  {currentQ.nivel && <span className="badge-amber">{currentQ.nivel}</span>}
+                </div>
+                <div className="text-navy-500 leading-relaxed mb-4">
+                  <span className="font-display font-bold text-teal-500">P{questionIndex + 1}.</span>{' '}
+                  <span dangerouslySetInnerHTML={{ __html: currentQ.questionText }} />
+                </div>
 
-            {/* Justification */}
-            {currentQuestion.justification && (
-              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-sm font-semibold text-blue-700 mb-2">Justificación:</p>
-                <div
-                  className="text-sm text-blue-800 prose prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: currentQuestion.justification }}
-                />
-              </div>
-            )}
-
-            {/* Navigation */}
-            <div className="flex gap-3 mt-4">
-              <button
-                onClick={() => setReviewIndex(Math.max(0, reviewIndex - 1))}
-                disabled={reviewIndex === 0}
-                className={clsx(
-                  'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-all',
-                  reviewIndex === 0
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
-                )}
-              >
-                <ChevronLeft className="w-4 h-4" />
-                Anterior
-              </button>
-              <button
-                onClick={() => setReviewIndex(Math.min(questions.length - 1, reviewIndex + 1))}
-                disabled={reviewIndex === questions.length - 1}
-                className={clsx(
-                  'flex-1 flex items-center justify-center gap-2 py-2 rounded-lg font-medium transition-all',
-                  reviewIndex === questions.length - 1
-                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                    : 'bg-cyan-600 text-white hover:bg-cyan-700'
-                )}
-              >
-                Siguiente
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-        </>
-        )}
-
-        {/* Tab Content: Rendimiento por curso */}
-        {activeTab === 'chart' && (
-        <div className="card p-6 animate-fade-in">
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-cyan-600" />
-              Rendimiento por curso ({chartData.length} cursos)
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Visualiza gráficamente tu desempeño en cada curso para identificar fortalezas y áreas de mejora
-            </p>
-          </div>
-          {/* Altura calculada: 45px por curso + padding */}
-          <div style={{ height: Math.max(400, chartData.length * 50 + 40) }} className="w-full">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart
-                data={chartData}
-                layout="vertical"
-                margin={{ top: 10, right: 40, left: 140, bottom: 10 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" horizontal={false} />
-                <XAxis
-                  type="number"
-                  domain={[0, 100]}
-                  tickFormatter={(value) => `${value}%`}
-                  stroke="#94A3B8"
-                  fontSize={12}
-                />
-                <YAxis
-                  type="category"
-                  dataKey="name"
-                  stroke="#64748B"
-                  tick={{ fontSize: 11, fill: '#475569' }}
-                  width={135}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  content={({ payload }) => {
-                    if (!payload || payload.length === 0) return null;
-                    const data = payload[0].payload as ChartDataItem;
+                <div className="space-y-2 mb-4">
+                  {currentQ.options.map((opt, i) => {
+                    const isSel = currentAns?.selectedOption === i;
+                    const isCorrect = currentQ.correctAnswer === i;
+                    let cls = 'border-neutral-border bg-white';
+                    if (isCorrect) cls = 'border-teal-500 bg-teal-500/10';
+                    else if (isSel) cls = 'border-red-500 bg-red-50';
                     return (
-                      <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-xl">
-                        <p className="font-bold text-slate-800 mb-1">{data.fullName}</p>
-                        <p className="text-slate-600">
-                          <span className="font-semibold" style={{ color: getColorForPercentage(data.percentage) }}>
-                            {data.percentage.toFixed(1)}%
-                          </span>
-                          {' '}({data.correct} de {data.total} correctas)
-                        </p>
+                      <div key={i} className={clsx('p-3 rounded-lg border-2 flex items-start gap-3', cls)}>
+                        <div className={clsx(
+                          'flex-shrink-0 w-8 h-8 rounded flex items-center justify-center font-bold text-sm',
+                          isCorrect ? 'bg-teal-500 text-white'
+                            : isSel ? 'bg-red-500 text-white'
+                            : 'bg-neutral-border text-navy-500'
+                        )}>
+                          {isCorrect ? <CheckCircle className="w-5 h-5" /> : isSel ? <XCircle className="w-5 h-5" /> : indexToLetter(i)}
+                        </div>
+                        <span className={clsx('flex-1 pt-1 text-sm',
+                          isCorrect ? 'text-teal-700 font-medium' : isSel ? 'text-red-700' : 'text-neutral-textSoft'
+                        )} dangerouslySetInnerHTML={{ __html: opt }} />
                       </div>
                     );
-                  }}
-                />
-                <Bar
-                  dataKey="percentage"
-                  radius={[0, 6, 6, 0]}
-                  barSize={32}
-                  background={{ fill: '#F1F5F9' }}
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={getColorForPercentage(entry.percentage)} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-
-          {/* Leyenda de colores - Basado en respuestas correctas */}
-          <div className="flex flex-wrap justify-center gap-4 mt-4 pt-4 border-t border-slate-100">
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-emerald-500"></div>
-              <span className="text-sm text-slate-600">≥80% Excelente</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-blue-500"></div>
-              <span className="text-sm text-slate-600">≥60% Bueno</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-amber-500"></div>
-              <span className="text-sm text-slate-600">≥50% Regular</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-4 h-4 rounded bg-red-500"></div>
-              <span className="text-sm text-slate-600">&lt;50% Necesita práctica</span>
-            </div>
-          </div>
-        </div>
-        )}
-
-        {/* Tab Content: Detalle por curso */}
-        {activeTab === 'details' && (
-        <div className="card overflow-hidden animate-fade-in">
-          <div className="p-6 border-b border-slate-100">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <Table2 className="w-5 h-5 text-cyan-600" />
-              Detalle por curso
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Consulta las respuestas correctas y porcentajes obtenidos en cada curso
-            </p>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-slate-50">
-                <tr>
-                  <th className="px-6 py-3 text-left text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                    Curso
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                    Correctas
-                  </th>
-                  <th className="px-6 py-3 text-center text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                    Porcentaje
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {result.courseResults.map((course, index) => (
-                  <tr key={index} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-6 py-4 text-sm font-medium text-slate-800">
-                      {course.name}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-center text-slate-600">
-                      {course.correctAnswers} / {course.totalQuestions}
-                    </td>
-                    <td className="px-6 py-4 text-center">
-                      <span
-                        className={clsx(
-                          'inline-flex px-2 py-1 text-xs font-semibold rounded-full',
-                          {
-                            'bg-emerald-100 text-emerald-700': course.percentage >= 80,
-                            'bg-blue-100 text-blue-700': course.percentage >= 60 && course.percentage < 80,
-                            'bg-amber-100 text-amber-700': course.percentage >= 50 && course.percentage < 60,
-                            'bg-red-100 text-red-700': course.percentage < 50
-                          }
-                        )}
-                      >
-                        {course.percentage.toFixed(1)}%
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot className="bg-cyan-50">
-                <tr>
-                  <td className="px-6 py-4 text-sm font-bold text-cyan-800">
-                    TOTAL
-                  </td>
-                  <td className="px-6 py-4 text-sm text-center font-bold text-cyan-800">
-                    {totalCorrect} / {totalQuestions}
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className="inline-flex px-2 py-1 text-xs font-bold rounded-full bg-cyan-200 text-cyan-800">
-                      {result.percentage.toFixed(1)}%
-                    </span>
-                  </td>
-                </tr>
-                <tr className="bg-cyan-100">
-                  <td colSpan={2} className="px-6 py-4 text-sm font-bold text-cyan-800">
-                    NOTA VIGESIMAL
-                  </td>
-                  <td className="px-6 py-4 text-center">
-                    <span className="inline-flex px-3 py-1 text-lg font-bold rounded-full bg-cyan-600 text-white">
-                      {formatVigesimalScore(result.vigesimalScore)}
-                    </span>
-                  </td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        </div>
-        )}
-
-        {/* Tab Content: Historial de Puntajes */}
-        {activeTab === 'history' && (
-        <div className="card p-6 animate-fade-in">
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <History className="w-5 h-5 text-cyan-600" />
-              Tu Historial de Simulacros
-            </h2>
-            <p className="text-sm text-slate-500 mt-1">
-              Visualiza tu progreso a lo largo del tiempo
-            </p>
-          </div>
-
-          {loadingHistory ? (
-            <div className="text-center py-8">
-              <div className="w-8 h-8 border-4 border-cyan-200 border-t-cyan-600 rounded-full animate-spin mx-auto mb-4"></div>
-              <p className="text-slate-500">Cargando historial...</p>
-            </div>
-          ) : userHistory && userHistory.history.length > 0 ? (
-            <>
-              {/* Stats del historial */}
-              <div className="grid grid-cols-3 gap-4 mb-6">
-                <div className="bg-gradient-to-br from-cyan-50 to-cyan-100 rounded-xl p-4 text-center">
-                  <Award className="w-8 h-8 text-cyan-500 mx-auto mb-2" />
-                  <p className="text-2xl font-bold text-cyan-700">{userHistory.totalIntentos}</p>
-                  <p className="text-xs text-cyan-600">Simulacros</p>
+                  })}
                 </div>
-                <div className="bg-gradient-to-br from-emerald-50 to-emerald-100 rounded-xl p-4 text-center">
-                  <Trophy className="w-8 h-8 text-emerald-500 mx-auto mb-2" />
-                  <p className="text-2xl font-bold text-emerald-700">{formatVigesimalScore(userHistory.mejorNota)}</p>
-                  <p className="text-xs text-emerald-600">Mejor Nota</p>
+
+                {/* Resultado */}
+                <div className={clsx('p-3 rounded-lg flex items-center gap-2 mb-4',
+                  currentAns?.isCorrect ? 'bg-teal-500/10 text-teal-700'
+                  : currentAns?.selectedOption === null ? 'bg-neutral-bg text-neutral-textSoft'
+                  : 'bg-red-100 text-red-800'
+                )}>
+                  {currentAns?.isCorrect ? (
+                    <><CheckCircle className="w-5 h-5" /><span className="font-medium">Respuesta correcta</span></>
+                  ) : currentAns?.selectedOption === null ? (
+                    <><MinusCircle className="w-5 h-5" /><span className="font-medium">No respondiste — La correcta es la opción {indexToLetter(currentQ.correctAnswer)}</span></>
+                  ) : (
+                    <><XCircle className="w-5 h-5" /><span className="font-medium">Respuesta incorrecta — La correcta es la opción {indexToLetter(currentQ.correctAnswer)}</span></>
+                  )}
                 </div>
-                <div className="bg-gradient-to-br from-blue-50 to-blue-100 rounded-xl p-4 text-center">
-                  <TrendingUp className="w-8 h-8 text-blue-500 mx-auto mb-2" />
-                  <p className="text-2xl font-bold text-blue-700">
-                    {userHistory.history.length >= 2
-                      ? (userHistory.history[0].notaVigesimal - userHistory.history[1].notaVigesimal > 0 ? '+' : '')
-                        + formatVigesimalScore(userHistory.history[0].notaVigesimal - userHistory.history[1].notaVigesimal)
-                      : '—'}
-                  </p>
-                  <p className="text-xs text-blue-600">vs Anterior</p>
+
+                {/* Justificación */}
+                {currentQ.justification && (
+                  <div className="mb-3 p-4 bg-teal-500/5 border border-teal-500/20 rounded-lg">
+                    <p className="text-sm font-bold text-teal-700 mb-2">Justificación:</p>
+                    <div className="text-sm text-navy-500" dangerouslySetInnerHTML={{ __html: currentQ.justification }} />
+                  </div>
+                )}
+
+                {/* Referencia normativa */}
+                {currentQ.referenciaNormativa && (
+                  <div className="mb-4 p-4 bg-amber-500/10 border border-amber-500/30 rounded-lg">
+                    <p className="text-sm font-bold text-amber-700 mb-2">Referencia normativa:</p>
+                    <div className="text-sm text-navy-500">{currentQ.referenciaNormativa}</div>
+                  </div>
+                )}
+
+                {/* Navegación */}
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setQuestionIndex(Math.max(0, questionIndex - 1))}
+                    disabled={questionIndex === 0}
+                    className="btn-outline flex-1 disabled:opacity-50"
+                  >
+                    <ChevronLeft className="w-4 h-4 inline" /> Anterior
+                  </button>
+                  <button
+                    onClick={() => setQuestionIndex(Math.min(questions.length - 1, questionIndex + 1))}
+                    disabled={questionIndex === questions.length - 1}
+                    className="btn-primary flex-1 disabled:opacity-50"
+                  >
+                    Siguiente <ChevronRight className="w-4 h-4 inline" />
+                  </button>
                 </div>
               </div>
+            )}
+          </div>
+        )}
 
-              {/* Gráfico de progreso */}
-              {userHistory.history.length >= 2 && (
-                <div className="mb-6">
-                  <h3 className="text-sm font-semibold text-slate-600 mb-3">Evolución de tus notas</h3>
-                  <div style={{ height: 250 }} className="w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <LineChart
-                        data={[...userHistory.history].reverse().map((h, idx) => ({
-                          intento: `#${idx + 1}`,
-                          nota: h.notaVigesimal,
-                          correctas: h.correctas
-                        }))}
-                        margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
-                      >
-                        <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
-                        <XAxis dataKey="intento" stroke="#94A3B8" fontSize={12} />
-                        <YAxis stroke="#94A3B8" fontSize={12} domain={[0, 20]} />
-                        <Tooltip
-                          content={({ payload }) => {
-                            if (!payload || payload.length === 0) return null;
-                            const data = payload[0].payload;
-                            return (
-                              <div className="bg-white border border-slate-200 rounded-lg px-4 py-3 shadow-xl">
-                                <p className="font-bold text-slate-800">{data.intento}</p>
-                                <p className="text-cyan-600 font-semibold">{formatVigesimalScore(data.nota)} / 20</p>
-                                <p className="text-slate-500 text-sm">{data.correctas} correctas</p>
-                              </div>
-                            );
-                          }}
-                        />
-                        <Line
-                          type="monotone"
-                          dataKey="nota"
-                          stroke="#0891B2"
-                          strokeWidth={3}
-                          dot={{ fill: '#0891B2', strokeWidth: 2, r: 5 }}
-                          activeDot={{ r: 8, fill: '#0891B2' }}
-                        />
-                      </LineChart>
-                    </ResponsiveContainer>
+        {/* Tab: Histórico */}
+        {activeTab === 'history' && (
+          <div className="card-encaps animate-fade-in">
+            <h2 className="text-lg font-display font-bold text-navy-500 mb-4 flex items-center gap-2">
+              <History className="w-5 h-5 text-teal-500" />
+              Tu historial de simulacros
+            </h2>
+            {loadingHistory ? (
+              <div className="text-center py-8">
+                <div className="w-8 h-8 border-4 border-teal-500/20 border-t-teal-500 rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-neutral-textSoft">Cargando historial...</p>
+              </div>
+            ) : userHistory && userHistory.history.length > 0 ? (
+              <>
+                <div className="grid grid-cols-3 gap-4 mb-6">
+                  <div className="bg-teal-500/10 rounded-xl p-4 text-center">
+                    <Award className="w-8 h-8 text-teal-500 mx-auto mb-2" />
+                    <p className="text-2xl font-display font-bold text-teal-700">{userHistory.totalIntentos}</p>
+                    <p className="text-xs text-teal-600">Simulacros</p>
+                  </div>
+                  <div className="bg-amber-500/10 rounded-xl p-4 text-center">
+                    <Trophy className="w-8 h-8 text-amber-500 mx-auto mb-2" />
+                    <p className="text-2xl font-display font-bold text-amber-700">{formatVigesimalScore(userHistory.mejorNenc)}</p>
+                    <p className="text-xs text-amber-600">Mejor NENC</p>
+                  </div>
+                  <div className="bg-navy-500/10 rounded-xl p-4 text-center">
+                    <Target className="w-8 h-8 text-navy-500 mx-auto mb-2" />
+                    <p className="text-2xl font-display font-bold text-navy-500">
+                      {userHistory.ultimoPf !== undefined ? formatVigesimalScore(userHistory.ultimoPf) : '—'}
+                    </p>
+                    <p className="text-xs text-navy-500">Último PF</p>
                   </div>
                 </div>
-              )}
 
-              {/* Tabla de historial */}
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-slate-600">#</th>
-                      <th className="px-4 py-2 text-left text-xs font-semibold text-slate-600">Fecha</th>
-                      <th className="px-4 py-2 text-center text-xs font-semibold text-slate-600">Correctas</th>
-                      <th className="px-4 py-2 text-right text-xs font-semibold text-slate-600">Nota</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {userHistory.history.map((entry, index) => {
-                      const isLatest = index === 0;
-                      const isBest = entry.notaVigesimal === userHistory.mejorNota;
-                      return (
-                        <tr key={index} className={clsx('hover:bg-slate-50', isLatest && 'bg-cyan-50')}>
-                          <td className="px-4 py-3 text-sm text-slate-600">
-                            {userHistory.totalIntentos - index}
-                            {isLatest && <span className="ml-1 text-xs text-cyan-600">(actual)</span>}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-slate-600">
-                            {new Date(entry.fecha).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-center text-slate-600">
-                            {entry.correctas}/{entry.total}
-                          </td>
-                          <td className="px-4 py-3 text-sm text-right font-medium">
-                            <span className={clsx(
-                              'inline-flex items-center gap-1',
-                              isBest ? 'text-emerald-600' : 'text-slate-800'
-                            )}>
-                              {isBest && <Trophy className="w-3.5 h-3.5" />}
-                              {formatVigesimalScore(entry.notaVigesimal)}
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                {userHistory.history.length >= 2 && (
+                  <div className="mb-6">
+                    <h3 className="text-sm font-bold uppercase text-neutral-textSoft mb-3">Evolución</h3>
+                    <div style={{ height: 250 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart
+                          data={[...userHistory.history].reverse().map((h, idx) => ({
+                            intento: `#${idx + 1}`,
+                            nenc: h.nenc,
+                            pf: h.pf
+                          }))}
+                          margin={{ top: 10, right: 30, left: 10, bottom: 10 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#E5E7EB" />
+                          <XAxis dataKey="intento" stroke="#6B7280" fontSize={12} />
+                          <YAxis stroke="#6B7280" fontSize={12} domain={[0, 20]} />
+                          <Tooltip />
+                          <Line type="monotone" dataKey="nenc" name="NENC" stroke="#00A99D" strokeWidth={3} dot={{ fill: '#00A99D', r: 5 }} />
+                          <Line type="monotone" dataKey="pf" name="PF" stroke="#F5C518" strokeWidth={3} dot={{ fill: '#F5C518', r: 5 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )}
+
+                <div className="overflow-x-auto rounded-lg border border-neutral-border">
+                  <table className="w-full text-sm">
+                    <thead className="bg-neutral-bg">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-bold uppercase text-navy-500">#</th>
+                        <th className="px-3 py-2 text-left text-xs font-bold uppercase text-navy-500">Fecha</th>
+                        <th className="px-3 py-2 text-center text-xs font-bold uppercase text-navy-500">NENC</th>
+                        <th className="px-3 py-2 text-center text-xs font-bold uppercase text-navy-500">PF</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-neutral-border">
+                      {userHistory.history.map((entry, i) => {
+                        const isLatest = i === 0;
+                        const isBest = entry.nenc === userHistory.mejorNenc;
+                        return (
+                          <tr key={i} className={isLatest ? 'bg-teal-500/5' : ''}>
+                            <td className="px-3 py-2 text-neutral-textSoft">
+                              {userHistory.totalIntentos - i}
+                              {isLatest && <span className="ml-1 text-xs text-teal-600">(actual)</span>}
+                            </td>
+                            <td className="px-3 py-2 text-neutral-textSoft">
+                              {new Date(entry.fecha).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </td>
+                            <td className="px-3 py-2 text-center font-bold">
+                              <span className={isBest ? 'text-amber-600' : 'text-navy-500'}>
+                                {isBest && <Trophy className="w-3.5 h-3.5 inline mr-1" />}
+                                {formatVigesimalScore(entry.nenc)}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-center text-navy-500">
+                              {entry.pf !== undefined ? formatVigesimalScore(entry.pf) : '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-8">
+                <History className="w-12 h-12 text-neutral-muted mx-auto mb-3" />
+                <p className="text-neutral-textSoft">Este es tu primer simulacro</p>
               </div>
-            </>
-          ) : (
-            <div className="text-center py-8">
-              <History className="w-12 h-12 text-slate-300 mx-auto mb-3" />
-              <p className="text-slate-500">Este es tu primer simulacro</p>
-              <p className="text-sm text-slate-400 mt-1">
-                Vuelve a practicar para ver tu progreso aquí
-              </p>
-            </div>
-          )}
-        </div>
+            )}
+          </div>
         )}
 
         {/* Action Buttons */}
         <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in">
-          <PDFGenerator result={result} />
-          <button
-            onClick={handleRestart}
-            className="btn-secondary"
-          >
-            <RotateCcw className="w-5 h-5" />
-            Nuevo Simulacro
+          <PDFGenerator result={{ ...result, ppp: localPpp ?? undefined, pf: livePf ?? undefined }} />
+          <button onClick={handleRestart} className="btn-outline">
+            <RotateCcw className="w-5 h-5 inline mr-1" /> Volver al inicio
           </button>
         </div>
 
-        <p className="text-center text-slate-400 text-sm flex items-center justify-center gap-2">
+        <p className="text-center text-neutral-muted text-sm flex items-center justify-center gap-2">
           <Stethoscope className="w-4 h-4" />
-          SimulaENCIB - Examen Nacional de Ciencias Básicas
+          {ENCAPS_INFO.name} — {ENCAPS_INFO.fullName}
         </p>
       </div>
     </div>
